@@ -4,8 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 
-	"github.com/Messenger/pkg/messengertypes"
+	messengertypes "github.com/Messenger/pkg/types"
 
 	"github.com/go-redis/redis"
 )
@@ -17,6 +18,7 @@ const (
 type RedisMessenger struct {
 	client        *redis.Client
 	subscriptions map[string]*subscription
+	sync.RWMutex
 }
 
 type subscription struct {
@@ -25,45 +27,44 @@ type subscription struct {
 }
 
 func NewMessenger() (*RedisMessenger, error) {
-	redisPort := os.Getenv("REDIS_PORT")
+	redisPort := os.Getenv(redisPortEnv)
 	if redisPort == "" {
 		return nil, errors.New("Redis env var not set")
 	}
+
 	messenger := &RedisMessenger{
 		client: redis.NewClient(&redis.Options{
 			Addr: "localhost:" + redisPort,
 		}),
 		subscriptions: map[string]*subscription{},
 	}
+
 	if _, err := messenger.client.Ping().Result(); err != nil {
-		return nil, errors.New(fmt.Sprintf("Error initializing redis client: %+v", err))
+		return nil, err
 	}
 
 	return messenger, nil
 }
 
 func (m *RedisMessenger) Subscribe(channel string) (<-chan messengertypes.Message, error) {
+	m.Lock()
+	defer m.Unlock()
+
 	if _, ok := m.subscriptions[channel]; ok {
-		return nil, errors.New(fmt.Sprintf("Already subscribed to %s", channel))
+		return nil, errors.New(fmt.Sprintf("Already subscribed to channel: %s", channel))
 	}
 
 	sub := &subscription{
 		pubsub:  m.client.Subscribe(channel),
-		channel: make(chan messengertypes.Message, 1),
+		channel: make(chan messengertypes.Message),
 	}
 
 	go func() {
-		ch := sub.pubsub.Channel()
-		for {
-			select {
-			case msg, ok := <-ch:
-				if !ok {
-					return
-				}
-				sub.channel <- messengertypes.Message{
-					Channel: msg.Channel,
-					Payload: msg.Payload,
-				}
+		msgChan := sub.pubsub.Channel()
+		for msg := range msgChan {
+			sub.channel <- messengertypes.Message{
+				Channel: msg.Channel,
+				Payload: msg.Payload,
 			}
 		}
 	}()
@@ -74,11 +75,16 @@ func (m *RedisMessenger) Subscribe(channel string) (<-chan messengertypes.Messag
 }
 
 func (m *RedisMessenger) Unsubscribe(channel string) error {
+	m.Lock()
+	defer m.Unlock()
+
 	sub, ok := m.subscriptions[channel]
 	if !ok {
-		return errors.New(fmt.Sprintf("Not subscribed to %s", channel))
+		return errors.New(fmt.Sprintf("Not subscribed to channel: %s", channel))
 	}
+
 	close(sub.channel)
+	delete(m.subscriptions, channel)
 
 	return sub.pubsub.Unsubscribe(channel)
 }
