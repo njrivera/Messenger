@@ -1,4 +1,4 @@
-package messengertypes
+package types
 
 type Messenger interface {
 	Subscribe(channel string) (<-chan Message, error)
