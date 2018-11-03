@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/Messenger/internal/redis"
 	messengertypes "github.com/Messenger/pkg/types"
@@ -29,7 +30,7 @@ func NewMessenger(mType string) (messengertypes.Messenger, error) {
 
 // DefaultMessenger will return a messenger object of the type that is set by the MESSENGER_TYPE env variable.
 func NewDefaultMessenger() (messengertypes.Messenger, error) {
-	mType := os.Getenv(messengerTypeEnv)
+	mType := strings.ToUpper(os.Getenv(messengerTypeEnv))
 	if mType == "" {
 		log.Printf("MESSENGER_TYPE env var not set - defaulting to Redis")
 		mType = RedisMessenger
